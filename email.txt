@@ -1,0 +1,1 @@
+Hi, my dashboard shows error 500 since morning and I cannot log in.

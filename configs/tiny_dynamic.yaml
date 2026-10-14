@@ -1,0 +1,5 @@
+model: {backbone: scratch, max_seq_len: 128, hidden_size: 128, num_layers: 4, num_heads: 4, intermediate_size: 352, dropout: 0.1, num_classes: 5}
+decision: {mode: dynamic, pooling: last, max_options: 8}
+calibration: {enabled: true, hidden_size: 64}
+data: {tokenizer: simple, labels_path: data/labels.json}
+training: {epochs: 30, batch_size: 32, lr: 0.001, backbone_lr: 0.001, patience: 8, monitor: val_f1}
