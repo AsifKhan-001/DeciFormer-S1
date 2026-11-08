@@ -10,6 +10,7 @@ from ..config import Config
 from ..metrics import calculate_entropy, calculate_top2_margin
 from .backbone import DecoderTransformer, PretrainedBackbone
 from .heads import CalibrationHead, DecisionHead, DecisionPooling, OptionScorer, TemperatureScaler
+from .layers import isolation_mask
 from .lora import apply_lora
 
 
@@ -72,12 +73,16 @@ class SystemOneModel(nn.Module):
         self.backbone_frozen = not any(p.requires_grad for p in bb.parameters())
 
     def forward(self, input_ids: Tensor, attention_mask: Tensor, option_indices: Tensor = None,
-                option_mask: Tensor = None, decision_position: Tensor = None) -> SystemOneOutput:
+                option_mask: Tensor = None, decision_position: Tensor = None,
+                segment_ids: Tensor = None, position_ids: Tensor = None) -> SystemOneOutput:
+        kw = {}
+        if self.dynamic and self.cfg.decision.isolate_options and segment_ids is not None:
+            kw = {"allow_mask": isolation_mask(segment_ids, attention_mask), "position_ids": position_ids}
         if self.backbone_frozen:
             with torch.no_grad():
-                h = self.backbone(input_ids, attention_mask)
+                h = self.backbone(input_ids, attention_mask, **kw)
         else:
-            h = self.backbone(input_ids, attention_mask)
+            h = self.backbone(input_ids, attention_mask, **kw)
         h = h.float()
 
         if not self.dynamic:

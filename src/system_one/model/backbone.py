@@ -24,10 +24,11 @@ class DecoderTransformer(nn.Module):
         self.final_norm = RMSNorm(cfg.hidden_size)
         self.apply(_init)
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None,
+                allow_mask: torch.Tensor = None, position_ids: torch.Tensor = None) -> torch.Tensor:
         x = self.embed(input_ids)
         for block in self.blocks:
-            x = block(x, attention_mask)
+            x = block(x, attention_mask, allow_mask, position_ids)
         return self.final_norm(x)
 
     def layer_list(self) -> list:
@@ -54,8 +55,14 @@ class PretrainedBackbone(nn.Module):
         self.hidden_size = self.model.config.hidden_size
         self.vocab_size = self.model.get_input_embeddings().num_embeddings
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
-        return self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False).last_hidden_state
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None,
+                allow_mask: torch.Tensor = None, position_ids: torch.Tensor = None) -> torch.Tensor:
+        if allow_mask is not None:
+            neg = torch.finfo(torch.float32).min
+            attention_mask = torch.zeros(allow_mask.shape, dtype=torch.float32, device=allow_mask.device)
+            attention_mask = attention_mask.masked_fill(~allow_mask, neg)
+        return self.model(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids,
+                          use_cache=False).last_hidden_state
 
     def layer_list(self) -> list:
         return list(self.model.layers)

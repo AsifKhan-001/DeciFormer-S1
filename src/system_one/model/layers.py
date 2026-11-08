@@ -36,9 +36,13 @@ class RotaryEmbedding(nn.Module):
         x1, x2 = x.chunk(2, dim=-1)
         return torch.cat([-x2, x1], dim=-1)
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor):
+    def forward(self, q: torch.Tensor, k: torch.Tensor, position_ids: torch.Tensor = None):
         n = q.size(-2)
-        cos, sin = self.cos[:n].to(q.dtype), self.sin[:n].to(q.dtype)
+        if position_ids is None:
+            cos, sin = self.cos[:n].to(q.dtype), self.sin[:n].to(q.dtype)
+        else:
+            cos = self.cos[position_ids].unsqueeze(1).to(q.dtype)
+            sin = self.sin[position_ids].unsqueeze(1).to(q.dtype)
         return q * cos + self._rotate_half(q) * sin, k * cos + self._rotate_half(k) * sin
 
 
@@ -55,15 +59,19 @@ class CausalSelfAttention(nn.Module):
         self.o_proj = nn.Linear(d, d, bias=False)
         self.rope = RotaryEmbedding(self.dh, max_seq_len, theta)
 
-    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor = None,
+                allow_mask: torch.Tensor = None, position_ids: torch.Tensor = None) -> torch.Tensor:
         b, n, _ = x.shape
         split = lambda t: t.view(b, n, self.h, self.dh).transpose(1, 2)
         q, k, v = split(self.q_proj(x)), split(self.k_proj(x)), split(self.v_proj(x))
-        q, k = self.rope(q, k)
-        allow = torch.ones(n, n, dtype=torch.bool, device=x.device).tril()[None, None]
-        if attention_mask is not None:
-            allow = allow & attention_mask.bool()[:, None, None, :]
-            allow = allow | torch.eye(n, dtype=torch.bool, device=x.device)[None, None]
+        q, k = self.rope(q, k, position_ids)
+        if allow_mask is not None:
+            allow = allow_mask
+        else:
+            allow = torch.ones(n, n, dtype=torch.bool, device=x.device).tril()[None, None]
+            if attention_mask is not None:
+                allow = allow & attention_mask.bool()[:, None, None, :]
+                allow = allow | torch.eye(n, dtype=torch.bool, device=x.device)[None, None]
         out = F.scaled_dot_product_attention(
             q, k, v, attn_mask=allow, dropout_p=self.dropout if self.training else 0.0)
         return self.o_proj(out.transpose(1, 2).reshape(b, n, -1))
@@ -91,6 +99,18 @@ class DecoderBlock(nn.Module):
         self.ffn_norm = RMSNorm(d)
         self.ffn = SwiGLU(d, cfg.intermediate_size)
 
-    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
-        x = x + self.attention(self.attn_norm(x), attention_mask)
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor = None,
+                allow_mask: torch.Tensor = None, position_ids: torch.Tensor = None) -> torch.Tensor:
+        x = x + self.attention(self.attn_norm(x), attention_mask, allow_mask, position_ids)
         return x + self.ffn(self.ffn_norm(x))
+
+
+def isolation_mask(segment_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    """segment_ids [B,N] (-1 = shared prompt, k = option k) -> allow mask [B,1,N,N].
+    Option tokens see the shared prompt and their own option only."""
+    n = segment_ids.size(1)
+    causal = torch.ones(n, n, dtype=torch.bool, device=segment_ids.device).tril()[None]
+    seg_q, seg_k = segment_ids.unsqueeze(2), segment_ids.unsqueeze(1)
+    allow = causal & ((seg_k == -1) | (seg_k == seg_q)) & attention_mask.bool().unsqueeze(1)
+    allow = allow | torch.eye(n, dtype=torch.bool, device=segment_ids.device)[None]
+    return allow.unsqueeze(1)

@@ -17,7 +17,8 @@ from .model.system_one import SystemOneModel
 from .tokenizer import build_tokenizer
 from .utils import count_parameters, env_info, get_device, load_labels, set_seed
 
-MODEL_KEYS = ("input_ids", "attention_mask", "option_indices", "option_mask", "decision_position")
+MODEL_KEYS = ("input_ids", "attention_mask", "option_indices", "option_mask", "decision_position",
+              "segment_ids", "position_ids")
 LOWER_BETTER = {"val_loss", "val_ece", "val_brier", "val_nll"}
 
 
@@ -112,7 +113,7 @@ def load_checkpoint(path, map_location="cpu") -> dict:
 
 def train(model, cfg: Config, train_loader, val_loader, device, out_dir, labels, resume_path=None) -> dict:
     tc, out_dir = cfg.training, Path(out_dir)
-    criterion = TotalLoss(tc.alpha_brier, tc.beta_conf)
+    criterion = TotalLoss(tc.alpha_brier, tc.beta_conf, tc.order_weight if tc.order_mode == "consistency" else 0.0)
     stages = []
     if tc.head_warmup_epochs > 0:
         stages.append((tc.head_warmup_epochs, 0.0))
@@ -159,7 +160,7 @@ def train(model, cfg: Config, train_loader, val_loader, device, out_dir, labels,
             batch = to_device(batch, device)
             with amp_ctx(device, tc.amp_dtype):
                 out = model(**model_inputs(batch))
-                loss, parts = criterion(out, batch["target"])
+                loss, parts = criterion(out, batch["target"], batch.get("perm"))
             (loss / tc.grad_accum_steps).backward()
             if (i + 1) % tc.grad_accum_steps == 0 or i + 1 == len(train_loader):
                 torch.nn.utils.clip_grad_norm_(trainable, tc.grad_clip)
@@ -180,7 +181,7 @@ def train(model, cfg: Config, train_loader, val_loader, device, out_dir, labels,
         state["history"].append(row)
         state["epoch"] = epoch + 1
         print(f"ep {row['epoch']:>3} | loss {row['train_loss']:.4f} ce {row['train_ce']:.4f} "
-              f"brier {row['train_brier']:.4f} conf {row['train_conf']:.4f} lr {row['lr']:.2e} "
+              f"brier {row['train_brier']:.4f} conf {row['train_conf']:.4f} ord {row['train_order']:.4f} lr {row['lr']:.2e} "
               f"T {row['temperature']:.3f} | val loss {row['val_loss']:.4f} acc {row['val_acc']:.4f} "
               f"f1 {row['val_f1']:.4f} ece {row['val_ece']:.4f} brier {row['val_brier']:.4f}")
 
@@ -218,7 +219,7 @@ def run_training(cfg: Config, train_path, val_path, out_dir, resume: bool = Fals
         tok = build_tokenizer(cfg, texts=texts)
         tok.save(tok_dir)
     cfg.model.vocab_size = tok.vocab_size
-    train_ds = DecisionDataset(train_path, tok, cfg)
+    train_ds = DecisionDataset(train_path, tok, cfg, pair=cfg.training.order_mode != "none")
     val_ds = DecisionDataset(val_path, tok, cfg)
     collate = make_collate(tok.pad_id)
     train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, shuffle=True, collate_fn=collate)

@@ -24,6 +24,8 @@ class DecisionConfig:
     temperature_init: float = 1.0
     min_temperature: float = 0.05
     learn_temperature: bool = True
+    isolate_options: bool = False
+    option_interaction: bool = False
 
 
 @dataclass
@@ -71,6 +73,8 @@ class TrainConfig:
     patience: int = 6
     monitor: str = "val_f1"
     amp_dtype: str = "none"
+    order_mode: str = "none"
+    order_weight: float = 1.0
     device: str = "auto"
 
     def __post_init__(self):
@@ -120,6 +124,10 @@ class Config:
         _check(0.0 <= t.unfreeze_fraction <= 1.0, "unfreeze_fraction must be in [0,1]")
         _check(0 <= t.head_warmup_epochs <= t.epochs, "head_warmup_epochs must be in [0,epochs]")
         _check(t.amp_dtype in ("none", "bfloat16", "float16"), "bad amp_dtype")
+        _check(t.order_mode in ("none", "augment", "consistency"), "order_mode must be none|augment|consistency")
+        _check(t.order_weight >= 0, "order_weight must be >= 0")
+        if t.order_mode != "none" or d.isolate_options:
+            _check(d.mode == "dynamic", "order_mode / isolate_options need decision.mode: dynamic")
         _check(t.grad_accum_steps >= 1 and t.batch_size >= 1, "bad batch settings")
         _check(p.clarify_threshold <= p.route_threshold, "clarify_threshold must be <= route_threshold")
 

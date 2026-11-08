@@ -36,7 +36,8 @@ class Predictor:
         ml = self.cfg.model.max_seq_len
         if self.model.dynamic:
             options = options or [self.labels[i].replace("_", " ") for i in range(len(self.labels))]
-            enc = encode_dynamic(self.tok, text, question, options, ml, self.cfg.decision.max_options)
+            enc = encode_dynamic(self.tok, text, question, options, ml, self.cfg.decision.max_options,
+                                 self.cfg.decision.isolate_options)
             return enc, list(options)
         return encode_fixed(self.tok, text, ml), [self.labels[i] for i in range(self.cfg.model.num_classes)]
 
