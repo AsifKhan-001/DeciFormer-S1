@@ -10,7 +10,7 @@ from ..config import Config
 from ..metrics import calculate_entropy, calculate_top2_margin
 from .backbone import DecoderTransformer, PretrainedBackbone
 from .heads import CalibrationHead, DecisionHead, DecisionPooling, OptionScorer, TemperatureScaler
-from .layers import isolation_mask
+from .layers import OptionInteraction, isolation_mask
 from .lora import apply_lora
 
 
@@ -48,6 +48,8 @@ class SystemOneModel(nn.Module):
         self.pooling = DecisionPooling(dc.pooling, d)
         self.decision_head = None if self.dynamic else DecisionHead(d, m.num_classes, m.dropout)
         self.option_scorer = OptionScorer(d, m.dropout) if self.dynamic else None
+        self.option_interaction = (
+            OptionInteraction(d) if self.dynamic and getattr(dc, "option_interaction", False) else None)
         self.temperature = TemperatureScaler(dc.temperature_init, dc.min_temperature, dc.learn_temperature)
         self.calibration_head = (
             CalibrationHead(d, cfg.calibration.hidden_size, m.dropout) if cfg.calibration.enabled else None)
@@ -91,6 +93,8 @@ class SystemOneModel(nn.Module):
             num_options = logits.size(-1)
         else:
             gathered = h.gather(1, option_indices.unsqueeze(-1).expand(-1, -1, h.size(-1)))
+            if self.option_interaction is not None:
+                gathered = self.option_interaction(gathered, option_mask)
             logits = self.option_scorer(gathered).masked_fill(~option_mask, -1e9)
             num_options = option_mask.sum(1)
 

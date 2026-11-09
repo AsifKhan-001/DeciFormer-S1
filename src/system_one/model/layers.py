@@ -114,3 +114,32 @@ def isolation_mask(segment_ids: torch.Tensor, attention_mask: torch.Tensor) -> t
     allow = causal & ((seg_k == -1) | (seg_k == seg_q)) & attention_mask.bool().unsqueeze(1)
     allow = allow | torch.eye(n, dtype=torch.bool, device=segment_ids.device)[None]
     return allow.unsqueeze(1)
+
+
+class OptionInteraction(nn.Module):
+    """Permutation-equivariant set attention over option vectors. x [B,K,d], option_mask [B,K] -> [B,K,d].
+    No positional information, so shuffling options only shuffles the outputs. Zero-init: starts as identity."""
+
+    def __init__(self, d: int, heads: int = 8, hidden: int = None):
+        super().__init__()
+        self.h = heads if d % heads == 0 else 1
+        self.dh = d // self.h
+        self.norm1 = RMSNorm(d)
+        self.q_proj = nn.Linear(d, d, bias=False)
+        self.k_proj = nn.Linear(d, d, bias=False)
+        self.v_proj = nn.Linear(d, d, bias=False)
+        self.o_proj = nn.Linear(d, d, bias=False)
+        self.norm2 = RMSNorm(d)
+        self.ffn = SwiGLU(d, hidden or 2 * d)
+        nn.init.zeros_(self.o_proj.weight)
+        nn.init.zeros_(self.ffn.down_proj.weight)
+
+    def forward(self, x: torch.Tensor, option_mask: torch.Tensor) -> torch.Tensor:
+        b, k, _ = x.shape
+        y = self.norm1(x)
+        split = lambda t: t.view(b, k, self.h, self.dh).transpose(1, 2)
+        out = F.scaled_dot_product_attention(
+            split(self.q_proj(y)), split(self.k_proj(y)), split(self.v_proj(y)),
+            attn_mask=option_mask.bool()[:, None, None, :])
+        x = x + self.o_proj(out.transpose(1, 2).reshape(b, k, -1))
+        return x + self.ffn(self.norm2(x))

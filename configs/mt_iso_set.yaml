@@ -1,0 +1,5 @@
+model: {backbone: pretrained, pretrained_name: HuggingFaceTB/SmolLM2-135M, max_seq_len: 512, dropout: 0.1, num_classes: 5}
+decision: {mode: dynamic, pooling: last, max_options: 8, isolate_options: true, option_interaction: true}
+calibration: {enabled: true, hidden_size: 128}
+data: {tokenizer: hf, labels_path: data/labels.json}
+training: {epochs: 4, batch_size: 4, grad_accum_steps: 8, lr: 0.001, backbone_lr: 0.00003, head_warmup_epochs: 1, unfreeze_fraction: 0.25, patience: 3, monitor: val_f1, order_mode: consistency, order_weight: 1.0}
