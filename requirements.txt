@@ -5,3 +5,7 @@ pyyaml>=6.0
 matplotlib>=3.8
 pytest>=8.0
 sentence-transformers
+scipy
+mcp
+scipy
+mcp
